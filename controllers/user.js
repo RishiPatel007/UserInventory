@@ -88,6 +88,7 @@ module.exports.postExpenses = async function (req, res) {
 			status.BAD_REQUEST
 		);
 	}
+
 	const oUser = await User.findById(iUserId);
 	if (!oUser) {
 		throw new ApiError("User not found , please login", status.NOT_FOUND);
@@ -107,7 +108,6 @@ module.exports.postExpenses = async function (req, res) {
 	let nTotalAmount = 0;
 
 	let oTempInventoryItems = {};
-	let aSuggestion = [];
 	for (let i = 0; i < aInventoryItems.length; i++) {
 		aInventoryItems[i].dPurchasedDate = moment().toDate();
 
@@ -115,6 +115,12 @@ module.exports.postExpenses = async function (req, res) {
 			const oItem = await Inventory.findOne({
 				sName: aInventoryItems[i].sName,
 			});
+			if (oItem.sType !== aInventoryItems[i].sType) {
+				throw new ApiError(
+					`Wrong category of ${aInventoryItems[i].sName}`,
+					400
+				);
+			}
 			oTempInventoryItems[aInventoryItems[i].sName] = oItem.nUnitPrice;
 		}
 
@@ -157,37 +163,127 @@ module.exports.postExpenses = async function (req, res) {
 		const nSameWeekExpense = calculateTotal(aSameWeekExpenses);
 		const nSameMonthExpense = calculateTotal(aSameMonthExpenses);
 
-		const nItemAmount =
+		let nItemAmount =
 			oTempInventoryItems[aInventoryItems[i].sName] *
 			aInventoryItems[i].nQuantity;
 
-		if (
-			nSameDayExpense + nItemAmount > oBudget.nDailyLimit ||
-			nSameWeekExpense + nItemAmount > oBudget.nWeeklyLimit ||
-			nSameMonthExpense + nItemAmount > oBudget.nMonthlyLimit
-		) {
-			aSuggestion.push(aInventoryItems[i].sName);
-		}
 		nTotalAmount += nItemAmount;
-	}
-	if (aSuggestion.length !== 0) {
-		throw new ApiError(
-			`Don't have budget , Try removing ${aSuggestion}`,
-			400
-		);
+		if (nSameDayExpense + nTotalAmount > oBudget.nDailyLimit) {
+			nTotalAmount -= nItemAmount;
+			const nRemainingAmount =
+				oBudget.nDailyLimit - nSameDayExpense - nTotalAmount;
+			console.log(nRemainingAmount);
+			const nSuggestion = Math.floor(
+				nRemainingAmount / oTempInventoryItems[aInventoryItems[i].sName]
+			);
+			if (nSuggestion === 0) {
+				if (i === 0) {
+					throw new ApiError("Out of budget", 400);
+				}
+				throw new ApiError(
+					`You can have upto ${aInventoryItems[i - 1].nQuantity}${
+						aInventoryItems[i - 1].sName
+					}`,
+					400
+				);
+			}
+			throw new ApiError(
+				`You can have upto ${nSuggestion}${aInventoryItems[i].sName}`,
+				400
+			);
+		}
+		if (nSameWeekExpense + nTotalAmount > oBudget.nWeeklyLimit) {
+			nTotalAmount -= nItemAmount;
+			const nRemainingAmount = nSameDayExpense - nTotalAmount;
+			const nSuggestion = Math.floor(
+				nRemainingAmount / oTempInventoryItems[aInventoryItems[i].sName]
+			);
+			if (nSuggestion === 0) {
+				if (i === 0) {
+					throw new ApiError("Out of budget", 400);
+				}
+				throw new ApiError(
+					`You can have upto ${aInventoryItems[i - 1].nQuantity}${
+						aInventoryItems[i - 1].sName
+					}`,
+					400
+				);
+			}
+			throw new ApiError(
+				`You can have upto ${nSuggestion}${aInventoryItems[i].sName}`,
+				400
+			);
+		}
+		if (nSameMonthExpense + nTotalAmount > oBudget.nMonthlyLimit) {
+			nTotalAmount -= nItemAmount;
+			const nRemainingAmount = nSameDayExpense - nTotalAmount;
+			const nSuggestion = Math.floor(
+				nRemainingAmount / oTempInventoryItems[aInventoryItems[i].sName]
+			);
+			if (nSuggestion === 0) {
+				if (i === 0) {
+					throw new ApiError("Out of budget", 400);
+				}
+				throw new ApiError(
+					`You can have upto ${aInventoryItems[i - 1].nQuantity}${
+						aInventoryItems[i - 1].sName
+					}`,
+					400
+				);
+			}
+			throw new ApiError(
+				`You can have upto ${nSuggestion}${aInventoryItems[i].sName}`,
+				400
+			);
+		}
 	}
 
 	for (let i = 0; i < aInventoryItems.length; i++) {
+		const oItem = await Inventory.findOne({
+			sName: aInventoryItems[i].sName,
+		});
+
+		if (oItem.nQuantity < aInventoryItems[i].nQuantity) {
+			throw new ApiError(
+				`Out of stock , you can only have ${oItem.nQuantity} ${aInventoryItems[i].sName}`,
+				400
+			);
+		}
+
+		aInventoryItems[i].iItemId = oItem._id;
 		await Inventory.updateOne(
 			{ sName: aInventoryItems[i].sName },
 			{ $inc: { nQuantity: -aInventoryItems[i].nQuantity } }
 		);
 	}
 
-	res.send("postExpenses");
+	console.log(aInventoryItems);
+
+	try {
+		await Expense.collection.dropIndex("aInventoryItems.sName_1");
+	} catch (err) {}
+	await Expense.create({
+		aInventoryItems,
+		nAmount: nTotalAmount,
+		iUserId,
+	});
+	sendResponse({
+		res,
+		nStatusCode: 200,
+		oData: "Expense added successfully",
+	});
 };
 module.exports.deleteExpenses = async function (req, res) {
-	res.send("deleteExpenses");
+	const iExpenseId = req.params.id;
+	const oResult = await Expense.deleteOne({ _id: iExpenseId });
+	if (oResult.deletedCount === 0) {
+		throw new ApiError("No expense with this id found");
+	}
+	sendResponse({
+		res,
+		nStatusCode: 200,
+		oData: "Expense added successfully",
+	});
 };
 
 function calculateTotal(arr) {

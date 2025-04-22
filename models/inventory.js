@@ -5,7 +5,6 @@ const inventorySchema = new mongoose.Schema({
 	sName: {
 		type: String,
 		required: true,
-		unique: true,
 	},
 	sType: {
 		type: String,

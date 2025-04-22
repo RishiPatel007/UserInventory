@@ -1,7 +1,6 @@
 const status = require("http-status").status;
-
 module.exports.asyncHandler = (fn) => (req, res, next) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
+	Promise.resolve(fn(req, res, next)).catch(next);
 };
 
 module.exports.sendResponse = function ({
@@ -16,9 +15,9 @@ module.exports.sendResponse = function ({
 
 module.exports.notFound = function notFound(req, res, next) {
 	throw new ApiError("Route Not Found", status.NOT_FOUND);
-}
+};
 
-module.exports.ApiError = class ApiError extends Error {
+class ApiError extends Error {
 	constructor(
 		sMessage = "Internal Server Error",
 		nStatusCode = status.INTERNAL_SERVER_ERROR
@@ -29,3 +28,5 @@ module.exports.ApiError = class ApiError extends Error {
 		this.nStatusCode = nStatusCode;
 	}
 }
+
+module.exports.ApiError = ApiError;

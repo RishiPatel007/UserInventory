@@ -42,3 +42,13 @@ module.exports.postExpense = function () {
 			.withMessage("nQuantity must be greater than 0"),
 	];
 };
+
+module.exports.deleteExpense = function () {
+	return [
+		param("id")
+			.notEmpty()
+			.withMessage("id required")
+			.custom((val) => mongoose.Types.ObjectId.isValid(val))
+			.withMessage("Invalid expense id"),
+	];
+};
