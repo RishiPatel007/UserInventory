@@ -21,5 +21,10 @@ const budgetSchema = new mongoose.Schema({
 		ref: "User",
 		required: true,
 	},
+	dCreatedAt: {
+		type: Date,
+		default: Date.now,
+	},
 });
+
 module.exports = mongoose.model("Budget", budgetSchema);

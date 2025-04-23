@@ -38,23 +38,56 @@ module.exports.postBudgets = async function (req, res) {
 	if (!oUser) {
 		throw new ApiError("User not found , please login", status.NOT_FOUND);
 	}
-	if (await Budget.findOne({ iUserId })) {
-		throw new ApiError("You already have a budget", status.BAD_REQUEST);
+
+	const oPrevBudget = await Budget.findOne({ iUserId });
+
+	if (oPrevBudget) {
+		const bIsSameMonth = moment(oPrevBudget.dCreatedAt).isSame(
+			moment(),
+			"month"
+		);
+
+		if (bIsSameMonth) {
+			throw new ApiError(
+				"You already have a budget for this month",
+				status.BAD_REQUEST
+			);
+		}
+
+		oPrevBudget.nDailyLimit = req.body.nDailyLimit;
+		oPrevBudget.nWeeklyLimit = req.body.nWeeklyLimit;
+		oPrevBudget.nMonthlyLimit = req.body.nMonthlyLimit;
+		oPrevBudget.dCreatedAt = moment().toDate();
+
+		await oPrevBudget.save();
+
+		return sendResponse({
+			res,
+			nStatusCode: 200,
+			oData: {
+				sMessage: "Successfully updated",
+				oBudget: oPrevBudget,
+			},
+		});
 	}
 
 	const oBudget = {
 		nDailyLimit: req.body.nDailyLimit,
 		nWeeklyLimit: req.body.nWeeklyLimit,
 		nMonthlyLimit: req.body.nMonthlyLimit,
+		dCreatedAt: moment().toDate(),
 		iUserId,
 	};
 
 	await Budget.create(oBudget);
 
-	sendResponse({
+	return sendResponse({
 		res,
 		nStatusCode: 201,
-		oData: "Budget created successfully",
+		oData: {
+			sMessage: "Successfully created budget",
+			oBudget,
+		},
 	});
 };
 
@@ -168,17 +201,19 @@ module.exports.postExpenses = async function (req, res) {
 			aInventoryItems[i].nQuantity;
 
 		nTotalAmount += nItemAmount;
+		let nDailySuggestion = null;
+		let nWeeklySuggestion = null;
+		let nMonthlySuggestion = null;
 		if (nSameDayExpense + nTotalAmount > oBudget.nDailyLimit) {
 			nTotalAmount -= nItemAmount;
 			const nRemainingAmount =
 				oBudget.nDailyLimit - nSameDayExpense - nTotalAmount;
-			console.log(nRemainingAmount);
-			const nSuggestion = Math.floor(
+			nDailySuggestion = Math.floor(
 				nRemainingAmount / oTempInventoryItems[aInventoryItems[i].sName]
 			);
-			if (nSuggestion === 0) {
+			if (nDailySuggestion === 0) {
 				if (i === 0) {
-					throw new ApiError("Out of budget", 400);
+					throw new ApiError("Out of daily budget", 400);
 				}
 				throw new ApiError(
 					`You can have upto ${aInventoryItems[i - 1].nQuantity}${
@@ -187,20 +222,18 @@ module.exports.postExpenses = async function (req, res) {
 					400
 				);
 			}
-			throw new ApiError(
-				`You can have upto ${nSuggestion}${aInventoryItems[i].sName}`,
-				400
-			);
 		}
 		if (nSameWeekExpense + nTotalAmount > oBudget.nWeeklyLimit) {
 			nTotalAmount -= nItemAmount;
-			const nRemainingAmount = nSameDayExpense - nTotalAmount;
-			const nSuggestion = Math.floor(
+			const nRemainingAmount =
+				oBudget.nWeeklyLimit - nSameWeekExpense - nTotalAmount;
+			nWeeklySuggestion = Math.floor(
 				nRemainingAmount / oTempInventoryItems[aInventoryItems[i].sName]
 			);
-			if (nSuggestion === 0) {
+
+			if (nWeeklySuggestion === 0) {
 				if (i === 0) {
-					throw new ApiError("Out of budget", 400);
+					throw new ApiError("Out of weekly budget", 400);
 				}
 				throw new ApiError(
 					`You can have upto ${aInventoryItems[i - 1].nQuantity}${
@@ -209,20 +242,17 @@ module.exports.postExpenses = async function (req, res) {
 					400
 				);
 			}
-			throw new ApiError(
-				`You can have upto ${nSuggestion}${aInventoryItems[i].sName}`,
-				400
-			);
 		}
 		if (nSameMonthExpense + nTotalAmount > oBudget.nMonthlyLimit) {
 			nTotalAmount -= nItemAmount;
-			const nRemainingAmount = nSameDayExpense - nTotalAmount;
-			const nSuggestion = Math.floor(
+			const nRemainingAmount =
+				oBudget.nMonthlyLimit - nSameWeekExpense - nTotalAmount;
+			nMonthlySuggestion = Math.floor(
 				nRemainingAmount / oTempInventoryItems[aInventoryItems[i].sName]
 			);
-			if (nSuggestion === 0) {
+			if (nMonthlySuggestion === 0) {
 				if (i === 0) {
-					throw new ApiError("Out of budget", 400);
+					throw new ApiError("Out of monthly budget", 400);
 				}
 				throw new ApiError(
 					`You can have upto ${aInventoryItems[i - 1].nQuantity}${
@@ -231,6 +261,23 @@ module.exports.postExpenses = async function (req, res) {
 					400
 				);
 			}
+		}
+		if (nDailySuggestion || nWeeklySuggestion || nMonthlySuggestion) {
+			if (nDailySuggestion === null) {
+				nDailySuggestion = Infinity;
+			}
+			if (nWeeklySuggestion === null) {
+				nWeeklySuggestion = Infinity;
+			}
+			if (nMonthlySuggestion === null) {
+				nMonthlySuggestion = Infinity;
+			}
+
+			const nSuggestion = Math.min(
+				nDailySuggestion,
+				nWeeklySuggestion,
+				nMonthlySuggestion
+			);
 			throw new ApiError(
 				`You can have upto ${nSuggestion}${aInventoryItems[i].sName}`,
 				400
@@ -257,20 +304,25 @@ module.exports.postExpenses = async function (req, res) {
 		);
 	}
 
-	console.log(aInventoryItems);
-
 	try {
 		await Expense.collection.dropIndex("aInventoryItems.sName_1");
 	} catch (err) {}
+
 	await Expense.create({
 		aInventoryItems,
 		nAmount: nTotalAmount,
 		iUserId,
 	});
-	sendResponse({
+	return sendResponse({
 		res,
 		nStatusCode: 200,
-		oData: "Expense added successfully",
+		oData: {
+			sMessage: "Expense added successfully",
+			oExpense: {
+				aInventoryItems,
+				nAmount: nTotalAmount,
+			},
+		},
 	});
 };
 module.exports.deleteExpenses = async function (req, res) {
@@ -282,7 +334,7 @@ module.exports.deleteExpenses = async function (req, res) {
 	sendResponse({
 		res,
 		nStatusCode: 200,
-		oData: "Expense added successfully",
+		oData: "Expense deleted successfully",
 	});
 };
 
